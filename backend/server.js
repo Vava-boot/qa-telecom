@@ -15,8 +15,11 @@ const express    = require("express");
 const cors       = require("cors");
 const rateLimit  = require("express-rate-limit");
 
-const app  = express();
-app.set("trust proxy", 1); // Trust Railway's proxy (required for express-rate-limit)
+const app = express();
+
+// 👇 ADICIONE AQUI
+app.set("trust proxy", 1);
+
 const PORT = process.env.PORT || 3001;
 
 // ── Middlewares ──────────────────────────────────────────────────────────────
