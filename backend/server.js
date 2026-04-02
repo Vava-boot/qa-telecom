@@ -106,13 +106,18 @@ app.post("/api/evaluate", async (req, res) => {
 
   try {
     // 3. Chamar OpenRouter (a chave fica AQUI, no servidor)
-    const response = await fetch("back-end-monitoramento-production.up.railway.app", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": process.env.ALLOWED_ORIGINS || "http://localhost:5173",
-        "X-Title": "QA Telecom Monitor"
+    const response = await fetch("https://back-end-monitoramento-production.up.railway.app/api/evaluate", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    agent,
+    company,
+    type,
+    transcript
+  })
+});
       },
       body: JSON.stringify({
         model: "google/gemini-2.0-flash-001", // Melhor custo-benefício para PT-BR estruturado
