@@ -16,6 +16,7 @@ const cors       = require("cors");
 const rateLimit  = require("express-rate-limit");
 
 const app  = express();
+app.set("trust proxy", 1); // Trust Railway's proxy (required for express-rate-limit)
 const PORT = process.env.PORT || 3001;
 
 // ── Middlewares ──────────────────────────────────────────────────────────────
@@ -106,18 +107,11 @@ app.post("/api/evaluate", async (req, res) => {
 
   try {
     // 3. Chamar OpenRouter (a chave fica AQUI, no servidor)
-    const response = await fetch("https://back-end-monitoramento-production.up.railway.app/api/evaluate", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({
-    agent,
-    company,
-    type,
-    transcript
-  })
-});
+    const response = await fetch("https://api.openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`
       },
       body: JSON.stringify({
         model: "google/gemini-2.0-flash-001", // Melhor custo-benefício para PT-BR estruturado
