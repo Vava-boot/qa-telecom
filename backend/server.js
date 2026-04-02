@@ -106,7 +106,7 @@ app.post("/api/evaluate", async (req, res) => {
 
   try {
     // 3. Chamar OpenRouter (a chave fica AQUI, no servidor)
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("back-end-monitoramento-production.up.railway.app", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
