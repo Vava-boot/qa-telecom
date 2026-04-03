@@ -6,16 +6,10 @@ const rateLimit = require("express-rate-limit");
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-// ── IMPORTANTE PARA RAILWAY ────────────────────────────────────────────────
+// ── IMPORTANTE PARA RAILWAY ──
 app.set("trust proxy", 1);
 
-// 🔥 DEBUG GLOBAL (RODA AO INICIAR)
-console.log("=================================");
-console.log("🔑 OPENROUTER_API_KEY (raw):", process.env.OPENROUTER_API_KEY);
-console.log("🔑 LENGTH:", process.env.OPENROUTER_API_KEY?.length);
-console.log("=================================");
-
-// ── CORS ──────────────────────────────────────────────────────────────────
+// ── CORS ──
 app.use(cors({
   origin: true,
   methods: ["GET","POST","OPTIONS"],
@@ -23,18 +17,19 @@ app.use(cors({
 }));
 app.options("*", cors());
 
-// ── BODY ──────────────────────────────────────────────────────────────────
+// ── BODY ──
 app.use(express.json({ limit: "1mb" }));
 
-// ── RATE LIMIT ─────────────────────────────────────────────────────────────
+// ── RATE LIMIT ──
 app.use("/api/", rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  message: { error: "Muitas requisições. Tente novamente em alguns minutos." }
 }));
 
-// ── HELPERS ────────────────────────────────────────────────────────────────
+// ── HELPERS ──
 function sanitize(str, maxLen = 8000) {
   if (typeof str !== "string") return "";
   return str.replace(/<[^>]*>/g, "").trim().slice(0, maxLen);
@@ -43,48 +38,49 @@ function sanitize(str, maxLen = 8000) {
 function validateEvalRequest(body) {
   const { agent, company, type, transcript } = body;
 
-  if (!agent || agent.trim().length < 2) return "Campo 'agent' inválido.";
-  if (!company || company.trim().length < 1) return "Campo 'company' inválido.";
-  if (!["Ligação", "Chat"].includes(type)) return "Tipo inválido.";
-  if (!transcript || transcript.trim().length < 10) return "Transcrição inválida.";
+  if (!agent || agent.length < 2) return "Campo 'agent' inválido.";
+  if (!company) return "Campo 'company' inválido.";
+  if (!["Ligação", "Chat"].includes(type)) return "Campo 'type' inválido.";
+  if (!transcript || transcript.length < 10) return "Transcrição muito curta.";
 
   return null;
 }
 
 function buildPrompt(agent, company, type, transcript) {
-  return `Avalie o atendimento de ${agent} (${type}) na empresa ${company}.
+  return `Você é um QA Sênior de Telecom.
+
+Analise o atendimento do agente ${agent} da empresa ${company} (${type}).
 
 Transcrição:
 ${transcript}
 
-Responda SOMENTE em JSON com:
-criteria[], pontos_fortes, pontos_desenvolver, feedback`;
+Responda SOMENTE em JSON válido:
+
+{
+ "criteria":[{"id":"saudacao","score":8,"obs":"..."}],
+ "pontos_fortes":"...",
+ "pontos_desenvolver":"...",
+ "feedback":"..."
+}`;
 }
 
-// ── HEALTH ────────────────────────────────────────────────────────────────
+// ── HEALTH ──
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
-    key_exists: !!process.env.OPENROUTER_API_KEY
+    key_configured: !!process.env.OPENROUTER_API_KEY
   });
 });
 
-// ── ROTA PRINCIPAL ────────────────────────────────────────────────────────
+// ── AVALIAÇÃO ──
 app.post("/api/evaluate", async (req, res) => {
-
-  console.log("=================================");
   console.log("🚀 NOVA REQUISIÇÃO /api/evaluate");
-
-  // 🔥 DEBUG POR REQUEST
-  console.log("🔑 KEY PRESENTE?", !!process.env.OPENROUTER_API_KEY);
-  console.log("🔑 KEY LENGTH:", process.env.OPENROUTER_API_KEY?.length);
-  console.log("=================================");
 
   const error = validateEvalRequest(req.body);
   if (error) return res.status(400).json({ error });
 
   if (!process.env.OPENROUTER_API_KEY) {
-    return res.status(500).json({ error: "API Key não configurada" });
+    return res.status(500).json({ error: "API Key não configurada." });
   }
 
   try {
@@ -94,65 +90,57 @@ app.post("/api/evaluate", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://qa-telecom-jzym.vercel.app",
-        "X-Title": "QA Telecom"
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`
       },
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: "google/gemini-2.0-flash-001",
         messages: [
-          { role: "system", content: "Responda somente JSON válido" },
-          { role: "user", content: buildPrompt(agent, company, type, transcript) }
+          {
+            role: "system",
+            content: "Responda sempre em JSON válido."
+          },
+          {
+            role: "user",
+            content: buildPrompt(agent, company, type, transcript)
+          }
         ]
       })
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      console.error("❌ ERRO OPENROUTER:", err);
-      return res.status(502).json({ error: err });
-    }
-
     const data = await response.json();
 
-    console.log("📦 RESPONSE:", JSON.stringify(data, null, 2));
-
-    let raw = data.choices?.[0]?.message?.content;
-
-    if (Array.isArray(raw)) {
-      raw = raw.map(p => p.text || "").join("");
+    if (!response.ok) {
+      console.error("❌ ERRO OPENROUTER:", JSON.stringify(data));
+      return res.status(502).json({ error: "Erro na IA" });
     }
 
-    raw = raw || "";
+    const raw = data.choices?.[0]?.message?.content;
 
-    console.log("🧠 RAW:", raw);
+    if (!raw) {
+      return res.status(502).json({ error: "Resposta vazia da IA" });
+    }
 
-    const cleaned = raw.replace(/```json|```/gi, "").trim();
-    const match = cleaned.match(/\{[\s\S]*\}/);
+    let parsed;
 
-    if (!match) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      console.error("❌ JSON inválido:", raw);
       return res.status(502).json({ error: "JSON inválido" });
     }
 
-    const parsed = JSON.parse(match[0]);
-
-    const avg = parsed.criteria.reduce((s, c) => s + Number(c.score), 0) / parsed.criteria.length;
-
-    return res.json({
-      criteria: parsed.criteria,
-      score: Math.round(avg * 10) / 10,
-      pontos_fortes: parsed.pontos_fortes || "",
-      pontos_desenvolver: parsed.pontos_desenvolver || "",
-      feedback: parsed.feedback || ""
-    });
+    return res.json(parsed);
 
   } catch (err) {
-    console.error("💥 ERRO GERAL:", err);
+    console.error("❌ ERRO GERAL:", err.message);
     return res.status(500).json({ error: "Erro interno" });
   }
 });
 
-// ── START ────────────────────────────────────────────────────────────────
+// ── START ──
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log("=================================");
+  console.log("🚀 Servidor rodando na porta", PORT);
+  console.log("🔑 KEY CONFIGURADA?", !!process.env.OPENROUTER_API_KEY);
+  console.log("=================================");
 });
