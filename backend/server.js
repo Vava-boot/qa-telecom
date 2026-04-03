@@ -6,10 +6,10 @@ const rateLimit = require("express-rate-limit");
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-// ── IMPORTANTE PARA RAILWAY ──
+// ── IMPORTANTE PARA RAILWAY ─────────────────────────────────────
 app.set("trust proxy", 1);
 
-// ── CORS ──
+// ── CORS ────────────────────────────────────────────────────────
 app.use(cors({
   origin: true,
   methods: ["GET","POST","OPTIONS"],
@@ -17,19 +17,18 @@ app.use(cors({
 }));
 app.options("*", cors());
 
-// ── BODY ──
+// ── BODY ────────────────────────────────────────────────────────
 app.use(express.json({ limit: "1mb" }));
 
-// ── RATE LIMIT ──
+// ── RATE LIMIT ──────────────────────────────────────────────────
 app.use("/api/", rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Muitas requisições. Tente novamente em alguns minutos." }
 }));
 
-// ── HELPERS ──
+// ── HELPERS ─────────────────────────────────────────────────────
 function sanitize(str, maxLen = 8000) {
   if (typeof str !== "string") return "";
   return str.replace(/<[^>]*>/g, "").trim().slice(0, maxLen);
@@ -38,118 +37,136 @@ function sanitize(str, maxLen = 8000) {
 function validateEvalRequest(body) {
   const { agent, company, type, transcript } = body;
 
-  if (!agent || agent.trim().length < 2) return "Campo 'agent' inválido.";
-  if (!company || company.trim().length < 1) return "Campo 'company' inválido.";
-  if (!["Ligação", "Chat"].includes(type)) return "Campo 'type' inválido.";
-  if (!transcript || transcript.trim().length < 10) return "Transcrição muito curta.";
+  if (!agent || agent.length < 2) return "Campo 'agent' inválido.";
+  if (!company) return "Campo 'company' inválido.";
+  if (!["Ligação", "Chat"].includes(type)) return "Tipo inválido.";
+  if (!transcript || transcript.length < 10) return "Transcrição inválida.";
 
   return null;
 }
 
 function buildPrompt(agent, company, type, transcript) {
-  return `Você atua como Avaliador de Qualidade (QA) Sênior de Telecom.
+  return `
+Você é um avaliador de qualidade de atendimento telecom.
 
-Analise o atendimento do agente ${sanitize(agent)} da empresa ${sanitize(company)} (${type}).
+Analise o atendimento do agente ${agent} na empresa ${company}.
 
 Transcrição:
-${sanitize(transcript, 7000)}
+${transcript}
 
-Responda SOMENTE em JSON válido:
-
+Responda SOMENTE em JSON:
 {
-  "criteria":[
-    {"id":"saudacao","score":8,"obs":"..."}
-  ],
-  "pontos_fortes":"...",
-  "pontos_desenvolver":"...",
-  "feedback":"..."
-}`;
+  "criteria":[{"id":"saudacao","score":8,"obs":"texto"}],
+  "pontos_fortes":"texto",
+  "pontos_desenvolver":"texto",
+  "feedback":"texto"
+}
+`;
 }
 
-// ── HEALTH ──
+// ── HEALTH CHECK ────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
     key_configured: !!process.env.OPENROUTER_API_KEY,
-    port: PORT
   });
 });
 
-// ── AVALIAÇÃO ──
-app.post("/api/evaluate", async (req, res) => {
-  console.log("=================================");
-  console.log("🚀 NOVA REQUISIÇÃO /api/evaluate");
-  console.log("🔑 KEY PRESENTE?", !!process.env.OPENROUTER_API_KEY);
-  console.log("=================================");
+// ── TESTE DIRETO OPENROUTER ─────────────────────────────────────
+app.get("/api/test-openrouter", async (_req, res) => {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/models", {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
+      }
+    });
 
-  const error = validateEvalRequest(req.body);
-  if (error) return res.status(400).json({ error });
+    const data = await response.json();
+
+    return res.json({
+      ok: response.ok,
+      status: response.status,
+      data
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AVALIAÇÃO ───────────────────────────────────────────────────
+app.post("/api/evaluate", async (req, res) => {
+  console.log("🚀 NOVA REQUISIÇÃO /api/evaluate");
+
+  const validationError = validateEvalRequest(req.body);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+
+  const { agent, company, type, transcript } = req.body;
+
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: "API KEY não configurada." });
+  }
 
   try {
-    const { agent, company, type, transcript } = req.body;
-
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
         "HTTP-Referer": "https://qa-telecom-jzym.vercel.app",
         "X-Title": "QA Telecom Monitor"
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
-        temperature: 0.3,
-        max_tokens: 1200,
         messages: [
-          {
-            role: "system",
-            content: "Você é um sistema de avaliação de qualidade. Responda SOMENTE em JSON válido."
-          },
-          {
-            role: "user",
-            content: buildPrompt(agent, company, type, transcript)
-          }
-        ]
+          { role: "system", content: "Responda apenas em JSON válido." },
+          { role: "user", content: buildPrompt(agent, company, type, transcript) }
+        ],
+        temperature: 0.3
       })
     });
 
-    const data = await response.json();
+    const text = await response.text();
 
     if (!response.ok) {
-      console.error("❌ ERRO OPENROUTER:", JSON.stringify(data));
-      return res.status(502).json({ error: data.error?.message || "Erro na IA" });
-    }
-
-    const raw = data.choices?.[0]?.message?.content;
-
-    if (!raw) {
-      console.error("❌ Resposta vazia:", data);
-      return res.status(502).json({ error: "Resposta vazia da IA" });
+      console.error("❌ ERRO OPENROUTER:", text);
+      return res.status(502).json({ error: "Erro na IA", details: text });
     }
 
     let parsed;
 
     try {
-      parsed = JSON.parse(raw.replace(/```json|```/gi, "").trim());
-    } catch (err) {
-      console.error("❌ JSON inválido:", raw);
-      return res.status(502).json({ error: "Resposta da IA em JSON inválido" });
+      parsed = JSON.parse(text);
+    } catch {
+      console.error("❌ JSON inválido:", text);
+      return res.status(502).json({ error: "JSON inválido da IA" });
     }
 
-    console.log("✅ Avaliação gerada com sucesso");
+    const content = parsed.choices?.[0]?.message?.content;
 
-    return res.json(parsed);
+    let final;
+
+    try {
+      final = JSON.parse(content);
+    } catch {
+      console.error("❌ JSON interno inválido:", content);
+      return res.status(502).json({ error: "Resposta mal formatada" });
+    }
+
+    return res.json(final);
 
   } catch (err) {
     console.error("❌ ERRO GERAL:", err.message);
-    return res.status(500).json({ error: "Erro interno no servidor" });
+    return res.status(500).json({ error: "Erro interno" });
   }
 });
 
-// ── START ──
+// ── START ───────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
   console.log("=================================");
-  console.log("🚀 Servidor rodando na porta", PORT);
-  console.log("🔑 KEY CONFIGURADA?", !!process.env.OPENROUTER_API_KEY);
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`🔑 KEY CONFIGURADA? ${!!process.env.OPENROUTER_API_KEY}`);
   console.log("=================================");
 });
