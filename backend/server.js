@@ -60,21 +60,13 @@ Responda SOMENTE em JSON válido, sem markdown, sem explicações fora do JSON:
 {"criteria":[{"id":"saudacao","score":8,"obs":"observação detalhada"},{"id":"tom_voz","score":7,"obs":"..."},{"id":"tempo_espera","score":9,"obs":"..."},{"id":"tempo_atendimento","score":7,"obs":"..."},{"id":"uso_mudo","score":6,"obs":"..."},{"id":"personalizacao","score":7,"obs":"..."},{"id":"tratativa","score":8,"obs":"..."},{"id":"gramatica","score":8,"obs":"..."},{"id":"dados_obrigatorios","score":9,"obs":"..."},{"id":"protocolo_encerramento","score":6,"obs":"..."}],"pontos_fortes":"texto curto e direto","pontos_desenvolver":"texto curto e direto","feedback":"Feedback construtivo usando primeiro nome do agente"}`;
 }
 
-// ── Health check ──────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    key_configured: !!process.env.OPENROUTER_API_KEY,
-    node: process.version,
-    port: PORT
-  });
+  res.json({ status: "ok", key_configured: !!process.env.OPENROUTER_API_KEY, node: process.version, port: PORT });
 });
 
-// ── Teste direto OpenRouter ───────────────────────────────────────────────────
 app.get("/api/test-openrouter", async (_req, res) => {
   if (!process.env.OPENROUTER_API_KEY)
     return res.status(500).json({ error: "Chave não configurada." });
-
   try {
     const r = await fetch("https://openrouter.ai/api/v1/models", {
       headers: {
@@ -91,7 +83,6 @@ app.get("/api/test-openrouter", async (_req, res) => {
   }
 });
 
-// ── Avaliação ─────────────────────────────────────────────────────────────────
 app.post("/api/evaluate", async (req, res) => {
   const validationError = validateEvalRequest(req.body);
   if (validationError) return res.status(400).json({ error: validationError });
@@ -121,7 +112,7 @@ app.post("/api/evaluate", async (req, res) => {
           "X-Title":       "QA Telecom Monitor"
         },
         body: JSON.stringify({
-          model:       "google/gemini-2.0-flash-001",
+          model:       "google/gemini-flash-1.5",  // modelo gratuito e estável
           max_tokens:  1200,
           temperature: 0.3,
           messages: [
@@ -184,7 +175,6 @@ app.post("/api/evaluate", async (req, res) => {
   }
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Servidor rodando na porta ${PORT}`);
   console.log(`🔑 Chave: ${!!process.env.OPENROUTER_API_KEY ? "configurada ✓" : "NÃO CONFIGURADA ✗"}`);
