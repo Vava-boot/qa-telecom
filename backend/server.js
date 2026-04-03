@@ -2,21 +2,25 @@ require("dotenv").config();
 const express   = require("express");
 const cors      = require("cors");
 const rateLimit = require("express-rate-limit");
- 
+
 const app  = express();
 const PORT = process.env.PORT || 3001;
- 
-// ── OBRIGATÓRIO no Railway — resolve o ValidationError do rate-limit ─────────
+
+// ── IMPORTANTE PARA RAILWAY ────────────────────────────────────────────────
 app.set("trust proxy", 1);
- 
-// ── CORS ─────────────────────────────────────────────────────────────────────
-app.use(cors({ origin: true, methods: ["GET","POST","OPTIONS"], credentials: false }));
+
+// ── CORS ──────────────────────────────────────────────────────────────────
+app.use(cors({
+  origin: true,
+  methods: ["GET","POST","OPTIONS"],
+  credentials: false
+}));
 app.options("*", cors());
- 
-// ── Body parser ───────────────────────────────────────────────────────────────
+
+// ── BODY ──────────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "1mb" }));
- 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
+
+// ── RATE LIMIT ─────────────────────────────────────────────────────────────
 app.use("/api/", rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -24,152 +28,184 @@ app.use("/api/", rateLimit({
   legacyHeaders: false,
   message: { error: "Muitas requisições. Tente novamente em alguns minutos." }
 }));
- 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// ── HELPERS ────────────────────────────────────────────────────────────────
 function sanitize(str, maxLen = 8000) {
   if (typeof str !== "string") return "";
   return str.replace(/<[^>]*>/g, "").trim().slice(0, maxLen);
 }
- 
+
 function validateEvalRequest(body) {
   const { agent, company, type, transcript } = body;
-  if (!agent    || typeof agent    !== "string" || agent.trim().length < 2)          return "Campo 'agent' inválido.";
-  if (!company  || typeof company  !== "string" || company.trim().length < 1)         return "Campo 'company' inválido.";
-  if (!["Ligação", "Chat"].includes(type))                                            return "Campo 'type' deve ser 'Ligação' ou 'Chat'.";
-  if (!transcript || typeof transcript !== "string" || transcript.trim().length < 10) return "Transcrição muito curta ou ausente.";
+
+  if (!agent || agent.trim().length < 2)
+    return "Campo 'agent' inválido.";
+
+  if (!company || company.trim().length < 1)
+    return "Campo 'company' inválido.";
+
+  if (!["Ligação", "Chat"].includes(type))
+    return "Campo 'type' deve ser 'Ligação' ou 'Chat'.";
+
+  if (!transcript || transcript.trim().length < 10)
+    return "Transcrição muito curta ou ausente.";
+
   return null;
 }
- 
+
 function buildPrompt(agent, company, type, transcript) {
-  const criteriosLigacao = `saudacao (Saudação), tom_voz (Tom de Voz), tempo_espera (Tempo de Espera), tempo_atendimento (Tempo de Atendimento), uso_mudo (Utilização do Mudo), personalizacao (Personalização), tratativa (Tratativa sondagem resolução), gramatica (Gramática), dados_obrigatorios (Dados obrigatórios), protocolo_encerramento (Protocolo e Encerramento)`;
-  const criteriosChat    = `saudacao (Saudação), empatia (Empatia), tempo_espera (Tempo de Espera), tempo_atendimento (Tempo de Atendimento), tempo_resposta (Tempo de Resposta), gramatica (Gramática), sondagem (Sondagem), confirmacao_dados (Confirmação de Dados), personalizacao (Personalização), protocolo_encerramento (Protocolo e Encerramento)`;
- 
-  return `Você atua como Avaliador de Qualidade (QA) Sênior de Telecomunicações (N1/N2).
-Analise o ${type} do agente ${sanitize(agent, 100)} na empresa ${sanitize(company, 100)}.
- 
+  const criteriosLigacao = `saudacao, tom_voz, tempo_espera, tempo_atendimento, uso_mudo, personalizacao, tratativa, gramatica, dados_obrigatorios, protocolo_encerramento`;
+  const criteriosChat    = `saudacao, empatia, tempo_espera, tempo_atendimento, tempo_resposta, gramatica, sondagem, confirmacao_dados, personalizacao, protocolo_encerramento`;
+
+  return `Você é um QA Sênior de Telecom.
+
+Analise o atendimento (${type}) do agente ${sanitize(agent)} na empresa ${sanitize(company)}.
+
 REGRAS:
-- Nota 10 exige perfeição absoluta.
-- Falhas críticas de processo (não confirmar CPF/dados, não fornecer protocolo) resultam em nota 0-4 no critério.
-- Seja rigoroso. Não invente dados que não estejam na transcrição.
-- Use o primeiro nome do agente no feedback (ex: "Artur, ...").
-- Feedbacks construtivos: elogio genuíno + ponto de melhoria respeitoso.
-- Pontos Fortes e Pontos a Desenvolver: máximo 2 frases diretas cada.
- 
-CONTEÚDO DO ATENDIMENTO:
-${sanitize(transcript, 7000)}
- 
-CRITÉRIOS PARA AVALIAR (0-10 cada):
+- Nota 10 = perfeito
+- Seja rigoroso
+- NÃO invente dados
+- Use o primeiro nome no feedback
+- Responda SOMENTE JSON válido
+
+TRANSCRIÇÃO:
+${sanitize(transcript)}
+
+CRITÉRIOS:
 ${type === "Chat" ? criteriosChat : criteriosLigacao}
- 
-Responda SOMENTE em JSON válido, sem markdown, sem explicações fora do JSON:
-{"criteria":[{"id":"saudacao","score":8,"obs":"observação detalhada"},{"id":"tom_voz","score":7,"obs":"..."},{"id":"tempo_espera","score":9,"obs":"..."},{"id":"tempo_atendimento","score":7,"obs":"..."},{"id":"uso_mudo","score":6,"obs":"..."},{"id":"personalizacao","score":7,"obs":"..."},{"id":"tratativa","score":8,"obs":"..."},{"id":"gramatica","score":8,"obs":"..."},{"id":"dados_obrigatorios","score":9,"obs":"..."},{"id":"protocolo_encerramento","score":6,"obs":"..."}],"pontos_fortes":"texto curto e direto","pontos_desenvolver":"texto curto e direto","feedback":"Feedback construtivo usando primeiro nome do agente"}`;
+
+FORMATO:
+{
+  "criteria":[{"id":"saudacao","score":8,"obs":"texto"}],
+  "pontos_fortes":"...",
+  "pontos_desenvolver":"...",
+  "feedback":"..."
+}`;
 }
- 
-// ── Health check ──────────────────────────────────────────────────────────────
+
+// ── HEALTH ────────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
-    key_configured: !!process.env.OPENROUTER_API_KEY,
-    node: process.version,
-    port: PORT
+    key_configured: !!process.env.OPENROUTER_API_KEY
   });
 });
- 
-// ── Avaliação ─────────────────────────────────────────────────────────────────
+
+// ── ROTA PRINCIPAL ────────────────────────────────────────────────────────
 app.post("/api/evaluate", async (req, res) => {
-  const validationError = validateEvalRequest(req.body);
-  if (validationError) return res.status(400).json({ error: validationError });
- 
+  const error = validateEvalRequest(req.body);
+  if (error) return res.status(400).json({ error });
+
   const { agent, company, type, transcript } = req.body;
- 
+
   if (!process.env.OPENROUTER_API_KEY) {
-    console.error("[ERRO] OPENROUTER_API_KEY não configurada");
-    return res.status(500).json({ error: "Chave de API não configurada no servidor." });
+    return res.status(500).json({ error: "API Key não configurada" });
   }
- 
+
   try {
-    console.log(`[INFO] Avaliando — ${agent} | ${company} | ${type}`);
- 
     const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 25000);
- 
+    const timeout = setTimeout(() => controller.abort(), 25000);
+
     let openRouterRes;
+
     try {
       openRouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         signal: controller.signal,
         headers: {
-          "Content-Type":  "application/json",
+          "Content-Type": "application/json",
           "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "HTTP-Referer":  "https://back-end-monitoramento-production.up.railway.app",
-          "X-Title":       "QA Telecom Monitor"
+          "HTTP-Referer": "https://qa-telecom-jzym.vercel.app",
+          "X-Title": "QA Telecom"
         },
         body: JSON.stringify({
-          model:       "google/gemini-2.0-flash-001",
-          max_tokens:  1200,
+          model: "openai/gpt-4o-mini", // 🔥 MAIS ESTÁVEL
           temperature: 0.3,
+          max_tokens: 1200,
           messages: [
-            { role: "system", content: "Você é um sistema de avaliação de qualidade de atendimento. Responda SEMPRE e SOMENTE em JSON válido, sem markdown." },
-            { role: "user",   content: buildPrompt(agent, company, type, transcript) }
+            {
+              role: "system",
+              content: "Responda SOMENTE JSON válido."
+            },
+            {
+              role: "user",
+              content: buildPrompt(agent, company, type, transcript)
+            }
           ]
         })
       });
     } finally {
       clearTimeout(timeout);
     }
- 
+
     if (!openRouterRes.ok) {
-      const errText = await openRouterRes.text();
-      console.error(`[ERRO] OpenRouter HTTP ${openRouterRes.status}:`, errText);
-      return res.status(502).json({ error: `Erro ao consultar IA (HTTP ${openRouterRes.status}). Verifique a chave e tente novamente.` });
+      const err = await openRouterRes.text();
+      console.error("OpenRouter erro:", err);
+      return res.status(502).json({ error: "Erro na IA" });
     }
- 
+
     const data = await openRouterRes.json();
-    const raw  = data.choices?.[0]?.message?.content || "";
- 
+
+    // 🔥 DEBUG
+    console.log("OPENROUTER RESPONSE:", JSON.stringify(data, null, 2));
+
+    // ── TRATAMENTO UNIVERSAL ─────────────────────────────
+    let raw = data.choices?.[0]?.message?.content;
+
+    if (Array.isArray(raw)) {
+      raw = raw.map(p => p.text || "").join("");
+    }
+
+    raw = raw || "";
+
     if (!raw) {
-      console.error("[ERRO] Resposta vazia:", JSON.stringify(data));
-      return res.status(502).json({ error: "Resposta vazia da IA. Tente novamente." });
+      return res.status(502).json({ error: "Resposta vazia da IA" });
     }
- 
+
+    console.log("RAW:", raw);
+
+    // ── EXTRAÇÃO SEGURA DE JSON ──────────────────────────
+    const cleaned = raw.replace(/```json|```/gi, "").trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+
+    if (!match) {
+      return res.status(502).json({ error: "JSON inválido da IA" });
+    }
+
     let parsed;
+
     try {
-      parsed = JSON.parse(raw.replace(/```json|```/gi, "").trim());
-    } catch {
-      console.error("[ERRO] JSON inválido:", raw);
-      return res.status(502).json({ error: "Resposta da IA em formato inválido. Tente novamente." });
+      parsed = JSON.parse(match[0]);
+    } catch (e) {
+      console.error("Erro parse:", e.message);
+      return res.status(502).json({ error: "Erro ao interpretar IA" });
     }
- 
-    if (!Array.isArray(parsed.criteria) || parsed.criteria.length < 10) {
-      console.error("[ERRO] Criteria insuficientes:", parsed.criteria?.length);
-      return res.status(502).json({ error: "Resposta da IA incompleta. Tente novamente." });
+
+    if (!Array.isArray(parsed.criteria)) {
+      return res.status(502).json({ error: "Resposta incompleta" });
     }
- 
-    const avg   = parsed.criteria.reduce((s, c) => s + Number(c.score), 0) / parsed.criteria.length;
-    const score = Math.round(avg * 10) / 10;
- 
-    console.log(`[INFO] Concluído — score: ${score}`);
- 
+
+    const avg = parsed.criteria.reduce((s, c) => s + Number(c.score), 0) / parsed.criteria.length;
+
     return res.json({
-      criteria:           parsed.criteria,
-      score,
-      pontos_fortes:      parsed.pontos_fortes      || "",
-      pontos_desenvolver: parsed.pontos_desenvolver  || "",
-      feedback:           parsed.feedback            || ""
+      criteria: parsed.criteria,
+      score: Math.round(avg * 10) / 10,
+      pontos_fortes: parsed.pontos_fortes || "",
+      pontos_desenvolver: parsed.pontos_desenvolver || "",
+      feedback: parsed.feedback || ""
     });
- 
+
   } catch (err) {
     if (err.name === "AbortError") {
-      console.error("[ERRO] Timeout — OpenRouter não respondeu em 25s");
-      return res.status(502).json({ error: "A IA demorou muito para responder. Tente novamente." });
+      return res.status(502).json({ error: "Timeout da IA" });
     }
-    console.error("[ERRO] Exceção:", err.message);
-    return res.status(500).json({ error: "Erro interno. Tente novamente." });
+
+    console.error("Erro geral:", err);
+    return res.status(500).json({ error: "Erro interno" });
   }
 });
- 
-// ── Start ─────────────────────────────────────────────────────────────────────
+
+// ── START ────────────────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Servidor rodando na porta ${PORT}`);
-  console.log(`🔑 Chave: ${process.env.OPENROUTER_API_KEY ? "configurada ✓" : "NÃO CONFIGURADA ✗"}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
