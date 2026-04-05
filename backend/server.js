@@ -61,7 +61,12 @@ Responda SOMENTE em JSON válido, sem markdown, sem explicações fora do JSON:
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", key_configured: !!process.env.OPENROUTER_API_KEY, node: process.version, port: PORT });
+  res.json({
+    status: "ok",
+    key_configured: !!process.env.OPENROUTER_API_KEY,
+    node: process.version,
+    port: PORT
+  });
 });
 
 app.get("/api/test-openrouter", async (_req, res) => {
@@ -112,12 +117,27 @@ app.post("/api/evaluate", async (req, res) => {
           "X-Title":       "QA Telecom Monitor"
         },
         body: JSON.stringify({
-          model:       "google/gemini-flash-1.5",  // modelo gratuito e estável
+          // Modelo principal + fallback automático conforme docs do OpenRouter
+          models: [
+            "google/gemini-2.0-flash-001",
+            "google/gemini-flash-1.5",
+            "meta-llama/llama-3.1-8b-instruct:free"
+          ],
           max_tokens:  1200,
           temperature: 0.3,
+          // Garante que o OpenRouter só usa provedores que retornam JSON corretamente
+          provider: {
+            allow_fallbacks: true
+          },
           messages: [
-            { role: "system", content: "Você é um sistema de avaliação de qualidade de atendimento. Responda SEMPRE e SOMENTE em JSON válido, sem markdown." },
-            { role: "user",   content: buildPrompt(agent, company, type, transcript) }
+            {
+              role:    "system",
+              content: "Você é um sistema de avaliação de qualidade de atendimento. Responda SEMPRE e SOMENTE em JSON válido, sem markdown."
+            },
+            {
+              role:    "user",
+              content: buildPrompt(agent, company, type, transcript)
+            }
           ]
         })
       });
@@ -128,11 +148,15 @@ app.post("/api/evaluate", async (req, res) => {
     if (!openRouterRes.ok) {
       const errText = await openRouterRes.text();
       console.error(`[ERRO] OpenRouter HTTP ${openRouterRes.status}:`, errText);
-      return res.status(502).json({ error: `Erro ao consultar IA (HTTP ${openRouterRes.status}). Verifique a chave e tente novamente.` });
+      return res.status(502).json({
+        error: `Erro ao consultar IA (HTTP ${openRouterRes.status}). Verifique a chave e tente novamente.`
+      });
     }
 
     const data = await openRouterRes.json();
     const raw  = data.choices?.[0]?.message?.content || "";
+
+    console.log(`[INFO] Modelo usado: ${data.model}`);
 
     if (!raw) {
       console.error("[ERRO] Resposta vazia:", JSON.stringify(data));
