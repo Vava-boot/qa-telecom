@@ -10,7 +10,6 @@ app.set("trust proxy", 1);
 
 app.use(cors({ origin: true, methods: ["GET","POST","OPTIONS"], credentials: false }));
 app.options("*", cors());
-
 app.use(express.json({ limit: "1mb" }));
 
 app.use("/api/", rateLimit({
@@ -61,12 +60,7 @@ Responda SOMENTE em JSON válido, sem markdown, sem explicações fora do JSON:
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    key_configured: !!process.env.OPENROUTER_API_KEY,
-    node: process.version,
-    port: PORT
-  });
+  res.json({ status: "ok", key_configured: !!process.env.OPENROUTER_API_KEY, node: process.version, port: PORT });
 });
 
 app.get("/api/test-openrouter", async (_req, res) => {
@@ -103,7 +97,7 @@ app.post("/api/evaluate", async (req, res) => {
     console.log(`[INFO] Avaliando — ${agent} | ${company} | ${type}`);
 
     const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 25000);
+    const timeout    = setTimeout(() => controller.abort(), 30000);
 
     let openRouterRes;
     try {
@@ -117,15 +111,14 @@ app.post("/api/evaluate", async (req, res) => {
           "X-Title":       "QA Telecom Monitor"
         },
         body: JSON.stringify({
-          // Modelo principal + fallback automático conforme docs do OpenRouter
+          // ":free" garante sem custo — fallback automático entre os 3
           models: [
-            "google/gemini-2.0-flash-001",
-            "google/gemini-flash-1.5",
-            "meta-llama/llama-3.1-8b-instruct:free"
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "mistralai/mistral-7b-instruct:free"
           ],
           max_tokens:  1200,
           temperature: 0.3,
-          // Garante que o OpenRouter só usa provedores que retornam JSON corretamente
           provider: {
             allow_fallbacks: true
           },
@@ -191,7 +184,7 @@ app.post("/api/evaluate", async (req, res) => {
 
   } catch (err) {
     if (err.name === "AbortError") {
-      console.error("[ERRO] Timeout — OpenRouter não respondeu em 25s");
+      console.error("[ERRO] Timeout — OpenRouter não respondeu em 30s");
       return res.status(502).json({ error: "A IA demorou muito para responder. Tente novamente." });
     }
     console.error("[ERRO] Exceção:", err.message);
